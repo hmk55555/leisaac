@@ -16,7 +16,7 @@ from isaaclab.app import AppLauncher
 # add argparse arguments
 parser = argparse.ArgumentParser(description="leisaac teleoperation for leisaac environments.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
-parser.add_argument("--teleop_device", type=str, default="keyboard", choices=['keyboard', 'so101leader', 'bi-so101leader'], help="Device for interacting with environment")
+parser.add_argument("--teleop_device", type``=str, default="keyboard", choices=['keyboard', 'so101leader', 'bi-so101leader'], help="Device for interacting with environment")
 parser.add_argument("--port", type=str, default='/dev/ttyACM0', help="Port for the teleop device:so101leader, default is /dev/ttyACM0")
 parser.add_argument("--left_arm_port", type=str, default='/dev/ttyACM0', help="Port for the left teleop device:bi-so101leader, default is /dev/ttyACM0")
 parser.add_argument("--right_arm_port", type=str, default='/dev/ttyACM1', help="Port for the right teleop device:bi-so101leader, default is /dev/ttyACM1")
@@ -33,6 +33,19 @@ parser.add_argument("--num_demos", type=int, default=0, help="Number of demonstr
 
 parser.add_argument("--recalibrate", action="store_true", help="recalibrate SO101-Leader or Bi-SO101Leader")
 parser.add_argument("--quality", action="store_true", help="whether to enable quality render mode.")
+
+# huggingface upload params
+parser.add_argument("--hf_repo_id", type=str, default=None, help="Hugging Face dataset repo id (e.g. username/repo)")
+parser.add_argument("--hf_private", action="store_true", help="Create or use a private repo on Hugging Face")
+parser.add_argument("--hf_branch", type=str, default="main", help="Branch to push to on Hugging Face")
+parser.add_argument("--hf_upload_on_success", action="store_true", help="Automatically upload after each successful demo reset")
+parser.add_argument("--hf_cli_path", type=str, default="huggingface-cli", help="Path to huggingface-cli executable")
+
+# runtime-configurable env geometry
+parser.add_argument("--arm_gap", type=float, default=None, help="Gap between left and right arm bases (meters)")
+parser.add_argument("--center_pos", type=float, nargs=3, default=None, help="Center position x y z for arm midpoint")
+parser.add_argument("--top_cam_pos", type=float, nargs=3, default=None, help="Top camera world position x y z")
+parser.add_argument("--top_cam_quat_ros", type=float, nargs=4, default=None, help="Top camera ROS quaternion w x y z")
 
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -57,6 +70,7 @@ from isaaclab.managers import TerminationTermCfg, DatasetExportMode
 from leisaac.devices import Se3Keyboard, SO101Leader, BiSO101Leader
 from leisaac.enhance.managers import StreamingRecorderManager, EnhanceDatasetExportMode
 from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
+import subprocess
 
 
 class RateLimiter:
@@ -130,6 +144,20 @@ def main():
     else:
         env_cfg.recorders = None
 
+    # apply runtime geometry overrides if using custom bi-arm env
+    try:
+        if args_cli.task and "CustomBiArm" in args_cli.task:
+            if args_cli.arm_gap is not None:
+                env_cfg.arm_gap = float(args_cli.arm_gap)
+            if args_cli.center_pos is not None:
+                env_cfg.center_pos = tuple(args_cli.center_pos)
+            if args_cli.top_cam_pos is not None:
+                env_cfg.top_cam_pos = tuple(args_cli.top_cam_pos)
+            if args_cli.top_cam_quat_ros is not None:
+                env_cfg.top_cam_quat_ros = tuple(args_cli.top_cam_quat_ros)
+    except Exception as e:
+        print(f"Warning: failed to apply geometry overrides: {e}")
+
     # create environment
     env: ManagerBasedRLEnv = gym.make(task_name, cfg=env_cfg).unwrapped
     # replace the original recorder manager with the streaming recorder manager
@@ -168,6 +196,26 @@ def main():
 
     teleop_interface.add_callback("R", reset_recording_instance)
     teleop_interface.add_callback("N", reset_task_success)
+
+    def upload_to_hub():
+        if not args_cli.hf_repo_id:
+            print("Hugging Face repo id not provided; skip upload.")
+            return
+        dataset_path = args_cli.dataset_file
+        repo = args_cli.hf_repo_id
+        branch = args_cli.hf_branch
+        private_flag = "--private" if args_cli.hf_private else ""
+        cli = args_cli.hf_cli_path
+        try:
+            # create repo if not exists
+            subprocess.run(f"{cli} repo create {repo} {private_flag} --type dataset --non-interactive", shell=True, check=False)
+            # upload file
+            subprocess.run(f"{cli} upload {repo} {dataset_path} --repo-type dataset --revision {branch}", shell=True, check=True)
+            print("Uploaded dataset to Hugging Face.")
+        except Exception as e:
+            print(f"Upload failed: {e}")
+
+    teleop_interface.add_callback("U", upload_to_hub)
     print(teleop_interface)
 
     rate_limiter = RateLimiter(args_cli.step_hz)
@@ -210,6 +258,8 @@ def main():
                 if args_cli.record and env.recorder_manager.exported_successful_episode_count + resume_recorded_demo_count > current_recorded_demo_count:
                     current_recorded_demo_count = env.recorder_manager.exported_successful_episode_count + resume_recorded_demo_count
                     print(f"Recorded {current_recorded_demo_count} successful demonstrations.")
+                if args_cli.record and args_cli.hf_upload_on_success:
+                    upload_to_hub()
                 if args_cli.record and args_cli.num_demos > 0 and env.recorder_manager.exported_successful_episode_count + resume_recorded_demo_count >= args_cli.num_demos:
                     print(f"All {args_cli.num_demos} demonstrations recorded. Exiting the app.")
                     break
