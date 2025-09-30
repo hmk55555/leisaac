@@ -40,6 +40,9 @@ parser.add_argument("--hf_private", action="store_true", help="Create or use a p
 parser.add_argument("--hf_branch", type=str, default="main", help="Branch to push to on Hugging Face")
 parser.add_argument("--hf_upload_on_success", action="store_true", help="Automatically upload after each successful demo reset")
 parser.add_argument("--hf_cli_path", type=str, default="huggingface-cli", help="Path to huggingface-cli executable")
+parser.add_argument("--hf_convert_to_lerobot", action="store_true", help="Convert HDF5 to LeRobot format before upload")
+parser.add_argument("--hf_lerobot_fps", type=int, default=30, help="FPS for LeRobot dataset conversion")
+parser.add_argument("--hf_lerobot_task", type=str, default="Bimanual manipulation task", help="Task description for LeRobot dataset")
 
 # runtime-configurable env geometry
 parser.add_argument("--arm_gap", type=float, default=None, help="Gap between left and right arm bases (meters)")
@@ -71,6 +74,11 @@ from leisaac.devices import Se3Keyboard, SO101Leader, BiSO101Leader
 from leisaac.enhance.managers import StreamingRecorderManager, EnhanceDatasetExportMode
 from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
 import subprocess
+import datetime
+import tempfile
+import shutil
+import h5py
+import numpy as np
 
 
 class RateLimiter:
@@ -99,6 +107,86 @@ class RateLimiter:
         if self.last_time < time.time():
             while self.last_time < time.time():
                 self.last_time += self.sleep_duration
+
+
+def convert_hdf5_to_lerobot(hdf5_path, output_name, fps=30, task_description="Bimanual manipulation task"):
+    """Convert HDF5 dataset to LeRobot format."""
+    try:
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+    except ImportError:
+        print("LeRobot not installed. Install with: pip install lerobot")
+        return hdf5_path
+    
+    # Create temp directory for conversion
+    temp_dir = tempfile.mkdtemp()
+    output_path = os.path.join(temp_dir, f"{output_name}.hdf5")
+    
+    try:
+        # Create LeRobot dataset
+        dataset = LeRobotDataset.create(
+            repo_id="temp_conversion",  # Will be overwritten
+            fps=fps,
+            robot_type="bi_so101_follower",
+            features={
+                "left": "image",
+                "right": "image", 
+                "top": "image",
+                "left_arm_action": "tensor",
+                "left_gripper_action": "tensor",
+                "right_arm_action": "tensor", 
+                "right_gripper_action": "tensor",
+            }
+        )
+        
+        # Process HDF5 file
+        with h5py.File(hdf5_path, 'r') as f:
+            demo_names = list(f['data'].keys())
+            print(f"Converting {len(demo_names)} demos to LeRobot format...")
+            
+            for demo_name in demo_names:
+                demo_group = f['data'][demo_name]
+                
+                # Skip failed demos
+                if "success" in demo_group.attrs and not demo_group.attrs["success"]:
+                    continue
+                
+                # Extract data
+                left_images = demo_group['left'][:]
+                right_images = demo_group['right'][:]
+                top_images = demo_group['top'][:]
+                left_arm_actions = demo_group['left_arm_action'][:]
+                left_gripper_actions = demo_group['left_gripper_action'][:]
+                right_arm_actions = demo_group['right_arm_action'][:]
+                right_gripper_actions = demo_group['right_gripper_action'][:]
+                
+                # Create frames
+                num_steps = len(left_images)
+                for i in range(num_steps):
+                    frame = {
+                        "left": left_images[i],
+                        "right": right_images[i],
+                        "top": top_images[i],
+                        "left_arm_action": left_arm_actions[i],
+                        "left_gripper_action": left_gripper_actions[i],
+                        "right_arm_action": right_arm_actions[i],
+                        "right_gripper_action": right_gripper_actions[i],
+                    }
+                    dataset.add_frame(frame=frame, task=task_description)
+                
+                dataset.save_episode()
+        
+        # Save to temp file
+        dataset.save(output_path)
+        print(f"LeRobot conversion complete: {output_path}")
+        return output_path
+        
+    except Exception as e:
+        print(f"LeRobot conversion failed: {e}")
+        return hdf5_path
+    finally:
+        # Clean up temp dataset
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def main():
@@ -201,17 +289,34 @@ def main():
         if not args_cli.hf_repo_id:
             print("Hugging Face repo id not provided; skip upload.")
             return
-        dataset_path = args_cli.dataset_file
+        
+        # Create timestamped filename to avoid overwrites
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
+        timestamped_name = f"{base_name}_{timestamp}"
+        
         repo = args_cli.hf_repo_id
         branch = args_cli.hf_branch
         private_flag = "--private" if args_cli.hf_private else ""
         cli = args_cli.hf_cli_path
+        
         try:
             # create repo if not exists
             subprocess.run(f"{cli} repo create {repo} {private_flag} --type dataset --non-interactive", shell=True, check=False)
-            # upload file
-            subprocess.run(f"{cli} upload {repo} {dataset_path} --repo-type dataset --revision {branch}", shell=True, check=True)
-            print("Uploaded dataset to Hugging Face.")
+            
+            if args_cli.hf_convert_to_lerobot:
+                # Convert to LeRobot format first
+                print("Converting HDF5 to LeRobot format...")
+                lerobot_file = convert_hdf5_to_lerobot(args_cli.dataset_file, timestamped_name, args_cli.hf_lerobot_fps, args_cli.hf_lerobot_task)
+                upload_file = lerobot_file
+                print(f"Converted to LeRobot format: {lerobot_file}")
+            else:
+                upload_file = args_cli.dataset_file
+            
+            # Upload the file
+            subprocess.run(f"{cli} upload {repo} {upload_file} --repo-type dataset --revision {branch}", shell=True, check=True)
+            print(f"Uploaded dataset to Hugging Face: {os.path.basename(upload_file)}")
+            
         except Exception as e:
             print(f"Upload failed: {e}")
 
