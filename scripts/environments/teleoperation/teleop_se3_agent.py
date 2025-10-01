@@ -16,7 +16,7 @@ from isaaclab.app import AppLauncher
 # add argparse arguments
 parser = argparse.ArgumentParser(description="leisaac teleoperation for leisaac environments.")
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
-parser.add_argument("--teleop_device", type``=str, default="keyboard", choices=['keyboard', 'so101leader', 'bi-so101leader'], help="Device for interacting with environment")
+parser.add_argument("--teleop_device", type=str, default="keyboard", choices=['keyboard', 'so101leader', 'bi-so101leader', 'bi-keyboard'], help="Device for interacting with environment")
 parser.add_argument("--port", type=str, default='/dev/ttyACM0', help="Port for the teleop device:so101leader, default is /dev/ttyACM0")
 parser.add_argument("--left_arm_port", type=str, default='/dev/ttyACM0', help="Port for the left teleop device:bi-so101leader, default is /dev/ttyACM0")
 parser.add_argument("--right_arm_port", type=str, default='/dev/ttyACM1', help="Port for the right teleop device:bi-so101leader, default is /dev/ttyACM1")
@@ -71,6 +71,7 @@ from isaaclab_tasks.utils import parse_env_cfg
 from isaaclab.managers import TerminationTermCfg, DatasetExportMode
 
 from leisaac.devices import Se3Keyboard, SO101Leader, BiSO101Leader
+from leisaac.devices.keyboard.bi_se3_keyboard import BiSe3Keyboard
 from leisaac.enhance.managers import StreamingRecorderManager, EnhanceDatasetExportMode
 from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
 import subprocess
@@ -210,7 +211,7 @@ def main():
 
     # precheck task and teleop device
     if "BiArm" in task_name:
-        assert args_cli.teleop_device == "bi-so101leader", "only support bi-so101leader for bi-arm task"
+        assert args_cli.teleop_device in ["bi-so101leader", "bi-keyboard"], "only support bi-so101leader or bi-keyboard for bi-arm task"
 
     # modify configuration
     if hasattr(env_cfg.terminations, "time_out"):
@@ -262,9 +263,11 @@ def main():
         teleop_interface = SO101Leader(env, port=args_cli.port, recalibrate=args_cli.recalibrate)
     elif args_cli.teleop_device == "bi-so101leader":
         teleop_interface = BiSO101Leader(env, left_port=args_cli.left_arm_port, right_port=args_cli.right_arm_port, recalibrate=args_cli.recalibrate)
+    elif args_cli.teleop_device == "bi-keyboard":
+        teleop_interface = BiSe3Keyboard(env, sensitivity=0.25 * args_cli.sensitivity)
     else:
         raise ValueError(
-            f"Invalid device interface '{args_cli.teleop_device}'. Supported: 'keyboard', 'so101leader', 'bi-so101leader'."
+            f"Invalid device interface '{args_cli.teleop_device}'. Supported: 'keyboard', 'so101leader', 'bi-so101leader', 'bi-keyboard'."
         )
 
     # add teleoperation key for env reset
