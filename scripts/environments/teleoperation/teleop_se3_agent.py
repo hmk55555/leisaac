@@ -49,6 +49,7 @@ import os
 import time
 import torch
 import gymnasium as gym
+from datetime import datetime
 
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab_tasks.utils import parse_env_cfg
@@ -93,7 +94,12 @@ def main():
 
     # get directory path and file name (without extension) from cli arguments
     output_dir = os.path.dirname(args_cli.dataset_file)
-    output_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
+    base_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
+    
+    # add timestamp to filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file_name = f"{base_file_name}_{timestamp}"
+    
     # create directory if it does not exist
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -117,12 +123,15 @@ def main():
     if hasattr(env_cfg.terminations, "success"):
         env_cfg.terminations.success = None
     if args_cli.record:
+        # construct the timestamped dataset file path
+        timestamped_dataset_file = os.path.join(output_dir, f"{output_file_name}.hdf5")
+        
         if args_cli.resume:
             env_cfg.recorders.dataset_export_mode = EnhanceDatasetExportMode.EXPORT_ALL_RESUME
-            assert os.path.exists(args_cli.dataset_file), "the dataset file does not exist, please don't use '--resume' if you want to record a new dataset"
+            assert os.path.exists(timestamped_dataset_file), "the dataset file does not exist, please don't use '--resume' if you want to record a new dataset"
         else:
             env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
-            assert not os.path.exists(args_cli.dataset_file), "the dataset file already exists, please use '--resume' to resume recording"
+            assert not os.path.exists(timestamped_dataset_file), "the dataset file already exists, please use '--resume' to resume recording"
         env_cfg.recorders.dataset_export_dir_path = output_dir
         env_cfg.recorders.dataset_filename = output_file_name
         if not hasattr(env_cfg.terminations, "success"):
@@ -169,8 +178,31 @@ def main():
         should_reset_task_success = True
         reset_recording_instance()
 
-    teleop_interface.add_callback("R", reset_recording_instance)
-    teleop_interface.add_callback("N", reset_task_success)
+    # add teleoperation key for starting new recording session
+    should_start_new_session = False
+
+    def start_new_recording_session():
+        nonlocal should_start_new_session, output_file_name
+        should_start_new_session = True
+        # Generate new timestamp for next recording session
+        new_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file_name = f"{base_file_name}_{new_timestamp}"
+        print(f"New recording session will save to: {output_file_name}.hdf5")
+
+    # Set up callbacks for different keyboard types
+    if args_cli.teleop_device in ["keyboard"]:
+        # Single arm keyboard: B=start, R=reset, N=success
+        teleop_interface.add_callback("R", reset_recording_instance)
+        teleop_interface.add_callback("N", reset_task_success)
+    elif args_cli.teleop_device in ["bi-keyboard"]:
+        # Bi-arm keyboard: ]=start recording, M=success, P=failure
+        teleop_interface.add_callback("RIGHT_BRACKET", start_new_recording_session)
+        teleop_interface.add_callback("M", reset_task_success)
+        teleop_interface.add_callback("P", reset_recording_instance)
+    else:
+        # For other devices (so101leader, bi-so101leader), use R and N
+        teleop_interface.add_callback("R", reset_recording_instance)
+        teleop_interface.add_callback("N", reset_task_success)
     print(teleop_interface)
 
     rate_limiter = RateLimiter(args_cli.step_hz)
@@ -216,6 +248,28 @@ def main():
                 if args_cli.record and args_cli.num_demos > 0 and env.recorder_manager.exported_successful_episode_count + resume_recorded_demo_count >= args_cli.num_demos:
                     print(f"All {args_cli.num_demos} demonstrations recorded. Exiting the app.")
                     break
+
+            # Handle new recording session (for ] key in bi-keyboard)
+            if should_start_new_session:
+                should_start_new_session = False
+                if args_cli.record:
+                    try:
+                        # Close the current recorder manager
+                        if hasattr(env.recorder_manager, '_dataset_file_handler') and env.recorder_manager._dataset_file_handler is not None:
+                            env.recorder_manager._dataset_file_handler.close()
+                        
+                        # Create a new recorder manager with the new filename
+                        env_cfg.recorders.dataset_filename = output_file_name
+                        del env.recorder_manager
+                        env.recorder_manager = StreamingRecorderManager(env_cfg.recorders, env)
+                        env.recorder_manager.flush_steps = 100
+                        env.recorder_manager.compression = 'lzf'
+                        
+                        print(f"Starting new recording session: {output_file_name}.hdf5")
+                    except Exception as e:
+                        print(f"Error starting new recording session: {e}")
+                        # Fallback: just update the filename
+                        env.recorder_manager.dataset_filename = output_file_name
 
             elif actions is None:
                 env.render()

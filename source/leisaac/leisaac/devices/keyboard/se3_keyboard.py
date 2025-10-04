@@ -112,11 +112,17 @@ class Se3Keyboard(Device):
                 self.started = True
                 self._reset_state = False
             elif event.input.name == "R":
+                print("R pressed - Resetting arm and stopping recording")
+                # Reset arm position completely
+                self._delta_pos = np.zeros(6)
                 self.started = False
                 self._reset_state = True
                 if "R" in self._additional_callbacks:
                     self._additional_callbacks["R"]()
             elif event.input.name == "N":
+                print("N pressed - Task success, resetting arm and stopping recording")
+                # Reset arm position completely
+                self._delta_pos = np.zeros(6)
                 self.started = False
                 self._reset_state = True
                 if "N" in self._additional_callbacks:

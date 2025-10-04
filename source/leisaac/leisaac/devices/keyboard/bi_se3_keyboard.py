@@ -96,7 +96,7 @@ class BiSe3Keyboard(Device):
         msg += "\t  Joint 6 (gripper):       B/N\n"
         msg += "\t----------------------------------------------\n"
         msg += "\tRecording Controls:\n"
-        msg += "\t  Start Recording:         SPACE\n"
+        msg += "\t  Start Recording:         ]\n"
         msg += "\t  End Recording (Failed):  P\n"
         msg += "\t  End Recording (Success): M\n"
         msg += "\tControl+C: quit"
@@ -150,20 +150,31 @@ class BiSe3Keyboard(Device):
             elif event.input.name in self._RIGHT_ARM_KEY_MAPPING.keys():
                 self._delta_pos_right += self._RIGHT_ARM_KEY_MAPPING[event.input.name]
             # Recording controls
-            elif event.input.name == "SPACE":
-                print("SPACE pressed - Starting recording")
-                self.started = True
-                self._reset_state = False
-                # Don't reset position buffers when starting - just set flags
+            elif event.input.name == "RIGHT_BRACKET":
+                print("] pressed - Resetting arms and starting new recording session")
+                # Reset arm positions completely
+                self._delta_pos_left = np.zeros(6)
+                self._delta_pos_right = np.zeros(6)
+                self.started = True  # Start controls immediately
+                self._reset_state = True  # Reset environment
+                if "RIGHT_BRACKET" in self._additional_callbacks:
+                    print("Calling ] callback")
+                    self._additional_callbacks["RIGHT_BRACKET"]()
             elif event.input.name == "P":
-                print("P pressed - Task failed, stopping recording")
+                print("P pressed - Task failed, resetting arms and stopping recording")
+                # Reset arm positions completely
+                self._delta_pos_left = np.zeros(6)
+                self._delta_pos_right = np.zeros(6)
                 self.started = False
                 self._reset_state = True
                 if "P" in self._additional_callbacks:
                     print("Calling P callback")
                     self._additional_callbacks["P"]()
             elif event.input.name == "M":
-                print("M pressed - Task success, stopping recording")
+                print("M pressed - Task success, resetting arms and stopping recording")
+                # Reset arm positions completely
+                self._delta_pos_left = np.zeros(6)
+                self._delta_pos_right = np.zeros(6)
                 self.started = False
                 self._reset_state = True
                 if "M" in self._additional_callbacks:

@@ -30,7 +30,7 @@ class SimpleBiArmEnvCfg(BiArmTaskEnvCfg):
         super().__post_init__()
 
         # Adjust robot positions for bi-arm setup
-        # self.scene.left_arm.init_state.pos = (0.2, -0.64, 0.01)
-        # self.scene.right_arm.init_state.pos = (0.5, -0.64, 0.01)
+        self.scene.left_arm.init_state.pos = (0.2, -0.64, 0.01)
+        self.scene.right_arm.init_state.pos = (0.5, -0.64, 0.01)
 
         parse_usd_and_create_subassets(TABLE_WITH_CUBE_USD_PATH, self)

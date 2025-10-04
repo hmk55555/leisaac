@@ -2,6 +2,7 @@ import enum
 import copy
 import h5py
 import os
+import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -70,7 +71,74 @@ class StreamingHDF5DatasetFileHandler(HDF5DatasetFileHandler):
                     for sub_key, sub_value in value.items():
                         create_dataset_helper(key_group, sub_key, sub_value)
                 else:
-                    data = value.cpu().numpy()
+                    # Handle both PyTorch tensors and Python lists
+                    if hasattr(value, 'cpu') and hasattr(value, 'numpy'):
+                        # PyTorch tensor - ensure it's on CPU before converting to numpy
+                        try:
+                            if value.is_cuda:
+                                data = value.cpu().numpy()
+                            else:
+                                data = value.numpy()
+                        except Exception as e:
+                            print(f"Warning: Failed to convert tensor to numpy: {e}")
+                            # Fallback: try to convert directly to numpy
+                            try:
+                                data = np.array(value.detach().cpu())
+                            except Exception as e2:
+                                print(f"Warning: Fallback conversion also failed: {e2}")
+                                data = np.array([0.0])  # Default fallback
+                    elif isinstance(value, list):
+                        # Python list - handle lists that might contain tensors
+                        try:
+                            # Check if list contains tensors
+                            if value and hasattr(value[0], 'cpu'):
+                                # Convert tensors in list to CPU first
+                                cpu_values = []
+                                for item in value:
+                                    if hasattr(item, 'cpu') and hasattr(item, 'numpy'):
+                                        if item.is_cuda:
+                                            cpu_values.append(item.cpu().numpy())
+                                        else:
+                                            cpu_values.append(item.numpy())
+                                    else:
+                                        cpu_values.append(item)
+                                data = np.array(cpu_values)
+                            else:
+                                # Regular list - convert to numpy array
+                                data = np.array(value)
+                        except Exception as e:
+                            print(f"Warning: Failed to convert list to numpy: {e}")
+                            # Fallback: try to convert each element individually
+                            try:
+                                converted_values = []
+                                for item in value:
+                                    if hasattr(item, 'cpu') and hasattr(item, 'numpy'):
+                                        if item.is_cuda:
+                                            converted_values.append(item.cpu().numpy())
+                                        else:
+                                            converted_values.append(item.numpy())
+                                    else:
+                                        converted_values.append(item)
+                                data = np.array(converted_values)
+                            except Exception as e2:
+                                print(f"Warning: Fallback list conversion also failed: {e2}")
+                                data = np.array([0.0])  # Default fallback
+                    else:
+                        # Other types (scalars, etc.) - convert to numpy array
+                        try:
+                            # Check if it's a tensor that wasn't caught earlier
+                            if hasattr(value, 'cpu') and hasattr(value, 'numpy'):
+                                if value.is_cuda:
+                                    data = value.cpu().numpy()
+                                else:
+                                    data = value.numpy()
+                            else:
+                                data = np.array(value)
+                        except Exception as e:
+                            print(f"Warning: Failed to convert value to numpy: {e}, value type: {type(value)}")
+                            # Last resort: convert to string representation
+                            data = np.array([str(value)])
+                    
                     if key not in group:
                         dataset = group.create_dataset(
                             key,
