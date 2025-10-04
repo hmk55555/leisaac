@@ -161,7 +161,7 @@ class BiSe3Keyboard(Device):
                     print("Calling ] callback")
                     self._additional_callbacks["RIGHT_BRACKET"]()
             elif event.input.name == "P":
-                print("P pressed - Task failed, resetting arms and stopping recording")
+                print("P pressed - Task failed, finalizing recording and resetting arms")
                 # Reset arm positions completely
                 self._delta_pos_left = np.zeros(6)
                 self._delta_pos_right = np.zeros(6)
@@ -171,7 +171,7 @@ class BiSe3Keyboard(Device):
                     print("Calling P callback")
                     self._additional_callbacks["P"]()
             elif event.input.name == "M":
-                print("M pressed - Task success, resetting arms and stopping recording")
+                print("M pressed - Task success, finalizing recording and resetting arms")
                 # Reset arm positions completely
                 self._delta_pos_left = np.zeros(6)
                 self._delta_pos_right = np.zeros(6)

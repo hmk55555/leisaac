@@ -180,6 +180,9 @@ def main():
 
     # add teleoperation key for starting new recording session
     should_start_new_session = False
+    
+    # add teleoperation key for finalizing recording
+    should_finalize_recording = False
 
     def start_new_recording_session():
         nonlocal should_start_new_session, output_file_name
@@ -189,6 +192,12 @@ def main():
         output_file_name = f"{base_file_name}_{new_timestamp}"
         print(f"New recording session will save to: {output_file_name}.hdf5")
 
+    def finalize_recording():
+        """Finalize the current recording and reset environment state."""
+        nonlocal should_finalize_recording, should_reset_recording_instance
+        should_finalize_recording = True
+        should_reset_recording_instance = True
+
     # Set up callbacks for different keyboard types
     if args_cli.teleop_device in ["keyboard"]:
         # Single arm keyboard: B=start, R=reset, N=success
@@ -197,8 +206,8 @@ def main():
     elif args_cli.teleop_device in ["bi-keyboard"]:
         # Bi-arm keyboard: ]=start recording, M=success, P=failure
         teleop_interface.add_callback("RIGHT_BRACKET", start_new_recording_session)
-        teleop_interface.add_callback("M", reset_task_success)
-        teleop_interface.add_callback("P", reset_recording_instance)
+        teleop_interface.add_callback("M", finalize_recording)
+        teleop_interface.add_callback("P", finalize_recording)
     else:
         # For other devices (so101leader, bi-so101leader), use R and N
         teleop_interface.add_callback("R", reset_recording_instance)
@@ -271,15 +280,33 @@ def main():
                         # Fallback: just update the filename
                         env.recorder_manager.dataset_filename = output_file_name
 
+            # Handle recording finalization (for M and P keys in bi-keyboard)
+            if should_finalize_recording:
+                should_finalize_recording = False
+                if args_cli.record:
+                    try:
+                        # Close the current recorder manager to finalize the recording
+                        if hasattr(env.recorder_manager, '_dataset_file_handler') and env.recorder_manager._dataset_file_handler is not None:
+                            env.recorder_manager._dataset_file_handler.close()
+                            print("Recording finalized and saved.")
+                    except Exception as e:
+                        print(f"Error finalizing recording: {e}")
+
             elif actions is None:
                 env.render()
             # apply actions
             else:
-                if not start_record_state:
-                    if args_cli.record:
-                        print("Start Recording!!!")
-                    start_record_state = True
-                env.step(actions)
+                # Check if actions is a dictionary (reset case) or tensor (normal case)
+                if isinstance(actions, dict):
+                    # This is a reset case, don't step the environment
+                    pass
+                else:
+                    # Normal case, step the environment with tensor actions
+                    if not start_record_state:
+                        if args_cli.record:
+                            print("Start Recording!!!")
+                        start_record_state = True
+                    env.step(actions)
             if rate_limiter:
                 rate_limiter.sleep(env)
 
