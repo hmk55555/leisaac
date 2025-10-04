@@ -2,6 +2,8 @@ import enum
 import copy
 import h5py
 import os
+import numpy as np
+import torch
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -69,6 +71,12 @@ class StreamingHDF5DatasetFileHandler(HDF5DatasetFileHandler):
                         key_group = group[key]
                     for sub_key, sub_value in value.items():
                         create_dataset_helper(key_group, sub_key, sub_value)
+                elif isinstance(value, list):
+                    # Handle list of tensors
+                    if value and hasattr(value[0], 'cpu'):
+                        data = torch.stack([v.cpu() for v in value]).numpy()
+                    else:
+                        data = np.array(value)
                 else:
                     data = value.cpu().numpy()
                     if key not in group:

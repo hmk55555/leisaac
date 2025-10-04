@@ -224,7 +224,16 @@ def main():
             assert os.path.exists(args_cli.dataset_file), "the dataset file does not exist, please don't use '--resume' if you want to record a new dataset"
         else:
             env_cfg.recorders.dataset_export_mode = DatasetExportMode.EXPORT_ALL
-            assert not os.path.exists(args_cli.dataset_file), "the dataset file already exists, please use '--resume' to resume recording"
+            # Auto-add timestamp if file exists
+            if os.path.exists(args_cli.dataset_file):
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_name = os.path.splitext(args_cli.dataset_file)[0]
+                ext = os.path.splitext(args_cli.dataset_file)[1]
+                args_cli.dataset_file = f"{base_name}_{timestamp}{ext}"
+                print(f"Dataset file already exists, using timestamped name: {args_cli.dataset_file}")
+                # Update output_dir and output_file_name for the new timestamped file
+                output_dir = os.path.dirname(args_cli.dataset_file)
+                output_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
         env_cfg.recorders.dataset_export_dir_path = output_dir
         env_cfg.recorders.dataset_filename = output_file_name
         if not hasattr(env_cfg.terminations, "success"):
