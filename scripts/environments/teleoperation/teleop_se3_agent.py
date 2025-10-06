@@ -206,8 +206,8 @@ def main():
     elif args_cli.teleop_device in ["bi-keyboard"]:
         # Bi-arm keyboard: ]=start recording, M=success, P=failure
         teleop_interface.add_callback("RIGHT_BRACKET", start_new_recording_session)
-        teleop_interface.add_callback("M", finalize_recording)
-        teleop_interface.add_callback("P", finalize_recording)
+        teleop_interface.add_callback("M", reset_task_success)
+        teleop_interface.add_callback("P", reset_recording_instance)
     else:
         # For other devices (so101leader, bi-so101leader), use R and N
         teleop_interface.add_callback("R", reset_recording_instance)

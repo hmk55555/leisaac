@@ -256,14 +256,66 @@ def process_bi_arm_data(dataset: LeRobotDataset, task: str, demo_group: h5py.Gro
 
 
 def convert_isaaclab_to_lerobot():
-    """NOTE: Modify the following parameters to fit your own dataset"""
-    repo_id = 'EverNorif/so101_test_orange_pick'
-    robot_type = 'so101_follower'  # so101_follower, bi_so101_follower
+    """Auto-detect and convert all successful episodes from HDF5 files"""
+    repo_id = 'user_name/dataset_name'
+    assert repo_id.startswith('user_name/'), "Please set repo_id to your actual HuggingFace repo (not the default 'user_name/dataset_name')."
+    robot_type = 'bi_so101_follower'  # so101_follower, bi_so101_follower
     fps = 30
     hdf5_root = './datasets'
-    hdf5_files = [os.path.join(hdf5_root, 'dataset.hdf5')]
-    task = 'Grab orange and place into plate'
-    push_to_hub = False
+    task = 'Simple bi-arm manipulation task'
+    push_to_hub = True
+
+    # Auto-detect all HDF5 files in the datasets directory
+    all_hdf5_files = [os.path.join(hdf5_root, f) for f in os.listdir(hdf5_root) if f.endswith('.hdf5')]
+    
+    if not all_hdf5_files:
+        print("No HDF5 files found in ./datasets directory!")
+        return
+    
+    print(f"Found {len(all_hdf5_files)} HDF5 files: {[os.path.basename(f) for f in all_hdf5_files]}")
+    
+    # Filter to only include files with successful episodes
+    hdf5_files = []
+    
+    for hdf5_file in all_hdf5_files:
+        try:
+            with h5py.File(hdf5_file, 'r') as f:
+                if 'data' not in f:
+                    print(f"Skipping {hdf5_file}: No 'data' group found")
+                    continue
+                    
+                demo_names = list(f['data'].keys())
+                if not demo_names:
+                    print(f"Skipping {hdf5_file}: No episodes found")
+                    continue
+                
+                has_successful_episodes = False
+                successful_episodes = 0
+                total_episodes = len(demo_names)
+                
+                for demo_name in demo_names:
+                    demo_group = f['data'][demo_name]
+                    # Check if episode is successful or has no success attribute (assume successful)
+                    if "success" not in demo_group.attrs or demo_group.attrs["success"]:
+                        has_successful_episodes = True
+                        successful_episodes += 1
+                
+                if has_successful_episodes:
+                    hdf5_files.append(hdf5_file)
+                    print(f"✓ {os.path.basename(hdf5_file)}: {successful_episodes}/{total_episodes} successful episodes")
+                else:
+                    print(f"✗ {os.path.basename(hdf5_file)}: No successful episodes")
+                    
+        except Exception as e:
+            print(f"Error checking file {hdf5_file}: {e}")
+            continue
+    
+    if not hdf5_files:
+        print("No HDF5 files with successful episodes found!")
+        return
+    
+    print(f"\nProcessing {len(hdf5_files)} files with successful episodes")
+    print("=" * 60)
 
     """parameters check"""
     assert robot_type in ['so101_follower', 'bi_so101_follower'], 'robot_type must be so101_follower or bi_so101_follower'
